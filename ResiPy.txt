@@ -1,0 +1,160 @@
+# Code Name: Resipy
+# Version: 1.0
+# Created: 26.06.2020
+# Last Modified: 01.04.2021
+# Author: Matteo Zampieri
+# Contact: matteo.zampieri@ec.europa.eu 
+# Licence: EUPL v1.2 - GPL
+
+class ProSeries
+    
+    # create production time-series 
+    def __init__(self,name,p)
+        self.name = name
+        self.pro = p.copy()
+        self.x = p[year]
+        self.y = p[value]
+    
+    # return length of the time-series 
+    def length(self)
+        return len( list( self.x ) )
+
+    # compute average production 
+    def mean(self)
+        return np.mean( self.y ) 
+    
+    # return smoothed time-series
+    def smooth(self)
+        span=min( 20.  float( self.length() ), 1. )
+        x=np.array( self.x )
+        y=np.array( self.y )
+        z = sm.nonparametric.lowess( y, x, frac = span )
+        yl = z[,1]
+        pl = self.pro.copy()
+        pl[value] = yl
+        return (pl)
+    
+    # return normalized time-series
+    def norm(self)
+        yl = self.smooth()[value]
+        yn = np.divide( self.y, yl )
+        pn = self.pro.copy()
+        pn[value] = yn
+        return (pn)   
+    
+    # production stability
+    def p_stab(self):
+        yn=self.norm()[value]
+        s=np.divide(1,np.std(yn))
+        return(s)
+    
+    # production resilience = stability^2
+    def p_res(self):
+        r=np.power(self.p_stab(),2)
+        return(r)
+
+    # sum production time-series
+    def __add__(self,other)
+        proc = pd.merge( self.pro, other.pro, on=year)
+        pro2 = proc.drop( year, axis = 1)
+        pros = pro2.sum( axis = 1)
+        pro = pd.DataFrame( { year list(proc[year]), value list(pros) } )
+        names = self.name + ' + ' + other.name
+        return ProSeries(names,pro)
+     
+    # copy time-series
+    def copy(self)
+        return ProSeries( self.name, self.pro.copy() )  
+    
+    # anomaly correlation between time-series
+    def acor(self,other)
+        a1 = self.norm()
+        a2 = other.norm()
+        proc = pd.merge( a1, a2, on = year )
+        proc.drop( year, axis = 1, inplace = True )
+        r = np.array( proc.corr() )[0,1]
+        return r
+
+    # plot time-series
+    def plot(self)
+        fig = plt.plot( self.x, self.y, label = self.name )
+        color = fig[-1].get_color()
+        plt.plot( self.x, self.smooth()[value], label = '', color = color )
+                
+# compute diversified system resilience
+def tot_res(name, tss)
+    # tss is a list of ProSeries objects of a production system
+    
+    # extract list of names
+    labels = list(map(lambda x  x.name, tss))
+    
+    # compute mean individual productions
+    imeans = list(map(lambda x  x.mean(), tss))
+    
+    # computes individual time-series resilience
+    ip_res = list(map(lambda x  x.p_res(), tss))
+    ip_len = list(map(lambda x  x.length(), tss))
+    
+    # compute progressively aggregated time-series
+    atss = list(it.accumulate(tss, lambda x , y  x + y))
+    
+    # compute progressively aggregated time-series resilience
+    ap_res = list(map(lambda x  x.p_res(), atss))
+    ap_len = list(map(lambda x  x.length(), atss))
+    
+    # compute incremental anomaly correlation (Pearson) of the progressively accumulated time-series 
+    pa_cor = list(x.acor(y) for x, y in zip(atss[-1], tss[1])) 
+    pa_cor.insert(0,0.)
+    
+    return labels,imeans,ip_res,ap_res,pa_cor,ip_len,ap_len
+
+# resilience-diversity plot 
+def res_plot(totres,moreinfo=False, ylabel='mean production')
+    # unpack variables
+    labels = totres[0]
+    imeans = totres[1]
+    ip_res = totres[2]
+    ap_res = totres[3]
+    pa_cor = totres[4]
+    ip_len = totres[5]
+    ap_len = totres[6]
+    
+    fig, ax = plt.subplots(figsize=(8,6))
+            
+    #plot mean productions and incremental correlations
+    color = (0., 1., 0., 1.)
+    if moreinfo
+        llabels = list(it.starmap(lambda x, y, z  x + ' (' + str(y) + ',' + str(z) + ')', zip(labels,ip_len,ap_len)))
+        # provides a list of colors for correlations
+        cmap = mpl.cm.get_cmap('jet')
+        pa_col = list(map(lambda x  cmap((x+1)2), pa_cor))
+        pa_col[0] = color
+        ax.bar(llabels,imeans, color=pa_col, label='mean production')
+    else
+        llabels = labels
+        ax.bar(llabels,imeans, color=color, label='mean production')
+    ax.set_ylabel(ylabel)
+    
+    # plot production resilience
+    ax2 = ax.twinx()
+    ax2.plot(llabels,ip_res,'ko',label='individual resilience')
+    ax2.plot(llabels,ap_res,'r-',label='aggregated resilience')
+        
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=90)
+    # ask matplotlib for the plotted objects and their labels
+    lines, labs = ax.get_legend_handles_labels()
+    lines2, labs2 = ax2.get_legend_handles_labels()
+    ax2.legend(lines + lines2, labs + labs2, loc=0)
+    
+    ax2.set_ylabel('annual production resilience')
+        
+    if moreinfo
+        fig.tight_layout(rect=[0, 0.03, 0.85, 0.95])
+        ax3 = fig.add_axes([.875, 0.5, 0.025, 0.4])
+        norm = mpl.colors.Normalize(vmin=-1, vmax=1)
+        cb1 = mpl.colorbar.ColorbarBase(ax3, cmap=cmap, norm=norm, orientation='vertical')
+        cb1.set_label('incremental anomaly correlation')
+    else
+        fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+
+    return fig
